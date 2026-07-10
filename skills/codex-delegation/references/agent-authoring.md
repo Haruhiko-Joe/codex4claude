@@ -1,6 +1,8 @@
 # Authoring a custom Codex agent
 
-Define when a recurring task type doesn't fit the built-ins. Persist user-scope by default, `--project` to commit it with the repo:
+Creating an agent is the exception, not the default. Almost every need is met by writing a better task prompt for a built-in agent; one-off requirements, project context, and acceptance criteria all belong in the task prompt. Define a new agent only when the same specialized task shape keeps recurring across sessions, its role and constraints are stable, and the built-ins' framing actively gets in the way. If in doubt, don't — a growing zoo of narrow agents fragments the work and drifts the task.
+
+Persist user-scope by default, `--project` to commit it with the repo:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/codex4claude.mjs" agent define <name> [--project] <<'EOF'

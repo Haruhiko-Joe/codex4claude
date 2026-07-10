@@ -21,9 +21,11 @@ All commands: `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex4claude.mjs" <command>`.
 
 Economics: your input tokens are expensive; codex quota is cheap. When in doubt on a heavy task, delegate — but never delegate the judgment.
 
-## Built-in agents
+## Agents: default to the built-in four
 
-`agent list` shows all. Built-ins: `implementer` (workspace-write), `explorer` (read-only), `algorithm-solver` (xhigh effort), `reviewer` (read-only, independent audit). Define custom ones per `references/agent-authoring.md`; they persist across sessions (user scope) or in the repo (`--project`).
+`implementer` (write), `explorer` (read), `algorithm-solver` (hard problems), `reviewer` (independent audit) cover nearly everything. **Express what you need in the task prompt, not in a new agent definition** — a precise spec handed to `implementer` beats a bespoke agent every time. Proliferating narrow agents fragments the work and drifts the task.
+
+Define a custom agent (`references/agent-authoring.md`) only when the same specialized task shape has recurred across sessions and its role and constraints are stable. One-off requirements always belong in the task prompt.
 
 ## Running a task
 
