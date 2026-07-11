@@ -1,6 +1,6 @@
 {
   "name": "codex4claude",
-  "description": "Marketplace for the codex4claude plugin — Codex as a persistent delegate agent team inside Claude Code",
+  "description": "Marketplace for the codex4claude plugin — Codex as an on-demand delegate tool inside Claude Code",
   "owner": {
     "name": "Joe"
   },
@@ -8,7 +8,7 @@
     {
       "name": "codex4claude",
       "source": "./",
-      "description": "Delegate coding work to Codex (gpt-5.6-sol) as a persistent agent team: define agents, run and continue sessions, review results."
+      "description": "Codex (gpt-5.6-sol) as an on-demand delegate tool: one MCP call hires a Codex instance, codex-reply iterates on it."
     }
   ]
 }

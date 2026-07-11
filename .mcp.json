@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "codex": {
+      "command": "codex",
+      "args": [
+        "mcp-server",
+        "-c", "model=\"gpt-5.6-sol\"",
+        "-c", "approval_policy=\"never\""
+      ]
+    }
+  }
+}
