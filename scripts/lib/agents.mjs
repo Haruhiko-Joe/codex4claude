@@ -10,7 +10,7 @@ import {
 } from "./paths.mjs";
 
 export const SANDBOXES = ["read-only", "workspace-write", "danger-full-access"];
-export const EFFORTS = ["minimal", "low", "medium", "high", "xhigh"];
+export const EFFORTS = ["low", "medium", "high", "xhigh", "max", "ultra"];
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,40}$/;
 
 function layers(cwd) {

@@ -8,7 +8,7 @@
     {
       "name": "codex4claude",
       "source": "./",
-      "description": "Delegate coding work to Codex (gpt-5.6-sol) as a persistent agent team: define agents, run and continue sessions, review results."
+      "description": "Codex (gpt-5.6-sol) as native Claude Code subagents: four relay agents dispatch spec'd work to persistent Codex sessions."
     }
   ]
 }

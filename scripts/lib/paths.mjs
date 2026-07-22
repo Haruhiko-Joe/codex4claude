@@ -42,24 +42,12 @@ export function userAgentsDir() {
   return path.join(dataDir(), "agents");
 }
 
-export function userWorkflowsDir() {
-  return path.join(dataDir(), "workflows");
-}
-
 export function projectAgentsDir(cwd) {
   return path.join(cwd, ".claude", "codex-agents");
 }
 
-export function projectWorkflowsDir(cwd) {
-  return path.join(cwd, ".claude", "codex-workflows");
-}
-
 export function builtinAgentsDir() {
   return path.join(PLUGIN_ROOT, "templates", "agents");
-}
-
-export function builtinWorkflowsDir() {
-  return path.join(PLUGIN_ROOT, "templates", "workflows");
 }
 
 export function ensureDir(dir) {

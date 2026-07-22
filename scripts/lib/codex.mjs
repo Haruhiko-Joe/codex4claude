@@ -23,7 +23,7 @@ export function resolveCodexBin() {
   return cachedBin;
 }
 
-export function buildExecArgv({ resumeSessionId, model, sandbox, effort, lastMessageFile, ephemeral, prompt }) {
+export function buildExecArgv({ resumeSessionId, model, sandbox, effort, fast, lastMessageFile, ephemeral, prompt }) {
   const argv = ["exec"];
   if (resumeSessionId) argv.push("resume", resumeSessionId);
   argv.push("--json", "--skip-git-repo-check", "-m", model, "-o", lastMessageFile);
@@ -33,6 +33,7 @@ export function buildExecArgv({ resumeSessionId, model, sandbox, effort, lastMes
     else argv.push("-s", sandbox);
   }
   if (effort) argv.push("-c", `model_reasoning_effort="${effort}"`);
+  if (fast) argv.push("-c", `service_tier="priority"`);
   if (ephemeral) argv.push("--ephemeral");
   argv.push(prompt);
   return argv;

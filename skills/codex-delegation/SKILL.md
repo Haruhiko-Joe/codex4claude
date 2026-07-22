@@ -1,81 +1,68 @@
 ---
 name: codex-delegation
-description: Delegate coding work to Codex (gpt-5.6-sol) as a persistent agent team — implementation, codebase exploration, hard algorithms, independent review. Use whenever a task involves substantial code writing, broad file reading, ICPC-level algorithmic problems, or when an independent second-model review would catch blind spots. Covers defining custom agents, running/continuing sessions, background jobs, and multi-step workflows.
+description: Dispatch execution work to Codex (gpt-5.6-sol) through the codex-implementer / codex-explorer / codex-solver / codex-reviewer subagents — implementation, broad codebase reading, hard algorithms, independent second-model review. Use whenever a task involves substantial code writing or reading and you only need the result, not the process. Covers spec writing, effort/fast selection, multi-turn sessions, and report verification.
 ---
 
 # Codex Delegation
 
-You are the manager of a two-model team. Codex (gpt-5.6-sol, large quota, strong instruction-following and algorithms) executes; you plan, write specs, review results, and report to the user. The user is the CEO: they decide direction and approve irreversible actions.
+Codex (gpt-5.6-sol, large quota, strong at agentic coding and algorithms) is your execution tier, exposed as four subagents in the Agent tool: `codex-implementer`, `codex-explorer`, `codex-solver`, `codex-reviewer`. Each relays your spec to a persistent Codex session and returns its report verbatim. You plan, write specs, and judge results; the user decides direction and approves irreversible actions.
 
-All commands: `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex4claude.mjs" <command>`. Run `help` for full flags, `doctor` if anything seems broken.
+## Choosing the worker
 
-## When to delegate
+Necessary condition for dispatching anything: you need the task's **result, not its process**. If you will need the intermediate reasoning or the decisions made along the way, do it yourself.
 
-| Delegate to codex | Keep for yourself |
+| Route | When |
 |---|---|
-| Implementing a spec'd change (multi-file edits, new modules) | Architectural decisions, requirement interpretation |
-| Broad codebase reading/exploration (saves your input tokens) | Conversations with the user |
-| Hard algorithmic problems (competitive-programming level — codex often beats you here) | Final acceptance judgment |
-| Mechanical refactors, test writing, bug reproduction | Anything doable in under a minute yourself |
-| Independent review of changes (yours or codex's — different blind spots) | Synthesizing multiple reports into a decision |
+| codex-* subagent | Execution against a writable spec: implementing a spec'd change, broad codebase reading (saves your input tokens), ICPC-level algorithms (codex often beats you here), independent review (different blind spots). |
+| Built-in Claude agents (Explore / Plan / general-purpose) | The subtask needs your own model's judgment: requirement interpretation, architecture tradeoffs, work entangled with the live conversation, or coordinating several Claude agents. |
+| No agent | The task is smaller than its handoff cost (roughly: you'd finish it yourself in under a minute), or the decisions are still evolving while you work. |
 
-Economics: your input tokens are expensive; codex quota is cheap. When in doubt on a heavy task, delegate — but never delegate the judgment.
+Parallel discipline: read-only dispatches (explorer, reviewer) fan out freely — send them in one message. Write dispatches are serial per workspace: the engine refuses a second concurrent write run, so never dispatch two writers to the same repo at once.
 
-## Agents: default to the built-in four
+## Writing the spec
 
-`implementer` (write), `explorer` (read), `algorithm-solver` (hard problems), `reviewer` (independent audit) cover nearly everything. **Express what you need in the task prompt, not in a new agent definition** — a precise spec handed to `implementer` beats a bespoke agent every time. Proliferating narrow agents fragments the work and drifts the task.
+Codex executes aggressively and follows instructions well, but expands scope when the task is loosely defined — the spec's Constraints are what keep it in bounds. It starts cold: name every file it needs.
 
-Define a custom agent (`references/agent-authoring.md`) only when the same specialized task shape has recurred across sessions and its role and constraints are stable. One-off requirements always belong in the task prompt.
-
-## Running a task
-
-Pass prompts via heredoc; write specs, not wishes:
-
-```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex4claude.mjs" run implementer <<'EOF'
-## Background
-Why this change is needed (1-3 sentences).
-## Input
-Relevant files/paths and current state. Be specific — codex starts cold.
-## Task
-What to do, with EXECUTABLE acceptance criteria (commands that must pass).
+```
+## Goal
+The outcome, in one or two sentences.
+## Context
+Relevant files/paths and current state. Decisions already made.
 ## Constraints
-Boundaries: what not to touch, interfaces to preserve.
-EOF
+What not to touch; interfaces to preserve; where the scope ends.
+## Done-when
+Executable acceptance criteria (commands that must pass).
 ```
 
-Key flags: `--write`/`--read-only` override the agent's sandbox; `--cd <dir>` sets the working directory (also the workspace key for sessions/state); `--effort xhigh` for hard problems; `--ephemeral` for throwaway explorations. `--dangerous` requires explicit user approval first.
+Optional dispatch hints above the spec: `effort: xhigh`, `fast`, `long` (expected > 8 min), `session: <id>` (continue earlier work).
 
-Long tasks (estimated > 5 min): use `--background`, then poll `status <run-id>` / fetch `result <run-id>`. Foreground runs time out at 540s (session survives; continue it). Don't poll in a tight loop in your own context — delegate polling to the `codex-runner` subagent and have it bring back `result` output verbatim.
+## Effort and speed
 
-## Working with a report (the manager's real job)
+| effort | Use for |
+|---|---|
+| low (+ fast) | Targeted lookups, mechanical edits |
+| medium | Routine exploration, ordinary changes |
+| high | Implementation, review, tricky bugs (implementer/reviewer default) |
+| xhigh | Cross-module work, large refactors, hard debugging |
+| max | Solver default; a single very hard, tightly coupled problem |
+| ultra | Competition-hard problems; background only |
 
-Every run prints codex's report, then a `── run info ──` footer (files touched, commands run with exit codes) and a LOG path:
+`fast` is orthogonal (~1.5× speed, more quota): worth it in interactive loops at effort ≤ high; pointless on long background runs.
 
-1. **Open Questions are mandatory work**: answer them (decide + continue) or escalate to the user. Never silently ignore.
-2. **Not satisfied → continue, don't re-run**: `run <agent> --continue "<targeted feedback>"` keeps the session so codex learns from the failure. A fresh `run` loses that context. After ~3 failed loops, stop and escalate.
-3. **Need more detail**: `log <run-id> --type command_execution` or `--grep <pattern>` reads the raw event stream. Never cat the whole events.jsonl.
-4. For important changes, run `reviewer` in a fresh session — a second model reviews with different blind spots than the author.
+## Multi-turn: you drive the rounds
 
-## Escalate to the user (CEO) — do not decide alone
+The `CODEX RUN` header of every report carries the session id. To iterate, SendMessage the **same relay subagent** with targeted feedback plus that session id — the resumed session keeps Codex's memory of what failed, which beats a cold re-dispatch. After ~3 rounds without convergence, stop and escalate to the user.
 
-- Irreversible or outward-facing actions (deletes, pushes, deploys, schema migrations).
-- Direction choices the spec doesn't settle (two defensible designs).
-- 3+ review loops without convergence, or implementer/reviewer deadlock (model disagreement is signal — present both positions).
-- Anything needing `--dangerous`.
+## Reading the report
 
-Report to the user in condensed decision-point form: outcome, what you verified, what needs their call. Not the full codex transcript.
+1. Verification claims are checked, not trusted: the `── run info ──` footer records the commands actually run and their exit codes — compare it against what the report claims. For load-bearing changes, rerun the key acceptance command yourself or dispatch `codex-reviewer` in a fresh session.
+2. Open Questions are mandatory work: decide and continue, or escalate. Never silently drop them.
+3. When chaining dispatches, pass forward summaries, not full reports.
 
-## Orchestration
+## Escalate to the user
 
-You are the orchestrator; every step's report passes through you. Patterns (playbooks in `workflow list` / `workflow show <name>`):
+Irreversible or outward-facing actions (deletes, pushes, deploys, migrations); direction choices the spec doesn't settle; 3+ rounds without convergence (model disagreement is signal — present both positions); anything needing danger-full-access.
 
-- **pipeline** (`feature-dev`): explore → implement → review; pass forward summaries, not full reports.
-- **fan-out** (`parallel-explore`): parallel `--background` read-only runs, harvest with `status`/`result`. Only read-only runs in parallel — concurrent write runs are refused.
-- **checker loop** (`fix-with-review`): reviewer findings go back via `--continue`; cap at 3 loops.
+## Diagnostics and custom agents
 
-Custom workflows: write a markdown playbook to `.claude/codex-workflows/<name>.md` (project, committable) or `~/.claude/codex4claude/workflows/<name>.md` (user) following `references/workflow-format.md`.
-
-## Sessions and persistence
-
-State is per-workspace (keyed by `--cd`/cwd). `--continue` resumes the agent's latest session in this workspace; `--session <id>` targets any session; `status` lists recent runs. Agent definitions and workflows persist across Claude sessions — reuse before redefining.
+`/codex4claude:setup` checks the runtime; `/codex4claude:status` lists recent runs. The four built-in engine roles cover nearly everything — express one-off needs in the spec, not in a new agent definition. Define a custom engine agent (`references/agent-authoring.md`) only when the same task shape has recurred across sessions with stable constraints.

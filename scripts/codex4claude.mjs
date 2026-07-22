@@ -12,7 +12,8 @@ Commands:
   run <agent> [PROMPT]                Run a task (prompt: --prompt-file > stdin > argument)
     --continue | --session <id>      Resume the agent's last / a specific session
     --write | --read-only | --dangerous   Sandbox override
-    --effort <minimal|low|medium|high|xhigh>
+    --effort <low|medium|high|xhigh|max|ultra>
+    --fast                            Fast mode (service_tier=priority, ~1.5x speed)
     --background                      Detached run, returns run id immediately
     --timeout <sec>                   Foreground timeout (default 540)
     --cd <dir>  --ephemeral  --prompt-file <path>
@@ -20,7 +21,6 @@ Commands:
   result <run-id>                     Replay the report of a finished run
   log <run-id> [--tail N] [--grep P] [--type <event-type>]
   cancel <run-id>
-  workflow list | show <name>
 `;
 
 async function main() {
@@ -45,8 +45,6 @@ async function main() {
       return (await import("./lib/background.mjs")).jobCommand(cmd, rest);
     case "run-worker": // internal: detached background worker entry
       return (await import("./lib/background.mjs")).runWorker(rest);
-    case "workflow":
-      return (await import("./lib/workflows.mjs")).workflowCommand(rest);
     default:
       throw new UsageError(`unknown command "${cmd}" (see: codex4claude.mjs help)`);
   }

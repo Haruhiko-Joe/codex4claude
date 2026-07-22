@@ -27,7 +27,8 @@ export function renderRun(dir) {
   const usage = meta.usage ?? { input: 0, cached: 0, output: 0 };
   lines.push(
     `CODEX RUN ${meta.status}  run=${meta.run_id}  agent=${meta.agent}  ` +
-      `session=${meta.session_id ?? "?"}  turn=${meta.turns ?? 1}  ${meta.duration_s ?? "?"}s  ` +
+      `session=${meta.session_id ?? "?"}  turn=${meta.turns ?? 1}  ` +
+      `effort=${meta.effort ?? "default"}${meta.fast ? " fast" : ""}  ${meta.duration_s ?? "?"}s  ` +
       `tok:in ${fmtTokens(usage.input)}(${fmtTokens(usage.cached)} cached)/out ${fmtTokens(usage.output)}`
   );
   lines.push("");

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseArgs, UsageError } from "../lib/args.mjs";
+import { buildExecArgv } from "../lib/codex.mjs";
 import { createEventCollector } from "../lib/events.mjs";
 import { parseFrontmatter, serializeFrontmatter } from "../lib/frontmatter.mjs";
 import { workspaceSlug } from "../lib/paths.mjs";
@@ -54,6 +55,40 @@ test("event collector extracts session, message, files, commands, usage", () => 
   assert.deepEqual(c.data.commands, [{ command: "npm test", exit: 0 }]);
   assert.deepEqual(c.data.usage, { input: 100, cached: 40, output: 9 });
   assert.equal(c.data.errors.length, 0);
+});
+
+test("buildExecArgv: fast flag and new-session sandbox", () => {
+  const argv = buildExecArgv({
+    model: "gpt-5.6-sol",
+    sandbox: "read-only",
+    effort: "low",
+    fast: true,
+    lastMessageFile: "/r/last.txt",
+    prompt: "p",
+  });
+  assert.deepEqual(argv, [
+    "exec", "--json", "--skip-git-repo-check", "-m", "gpt-5.6-sol", "-o", "/r/last.txt",
+    "-s", "read-only",
+    "-c", 'model_reasoning_effort="low"',
+    "-c", 'service_tier="priority"',
+    "p",
+  ]);
+});
+
+test("buildExecArgv: resume uses sandbox_mode config override", () => {
+  const argv = buildExecArgv({
+    resumeSessionId: "019f-abc",
+    model: "gpt-5.6-sol",
+    sandbox: "workspace-write",
+    lastMessageFile: "/r/last.txt",
+    prompt: "p",
+  });
+  assert.deepEqual(argv, [
+    "exec", "resume", "019f-abc", "--json", "--skip-git-repo-check", "-m", "gpt-5.6-sol",
+    "-o", "/r/last.txt",
+    "-c", 'sandbox_mode="workspace-write"',
+    "p",
+  ]);
 });
 
 test("workspaceSlug is stable and filesystem-safe", () => {

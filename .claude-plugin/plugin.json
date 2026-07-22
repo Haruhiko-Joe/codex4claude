@@ -1,12 +1,12 @@
 {
   "name": "codex4claude",
   "displayName": "Codex for Claude",
-  "version": "0.1.0",
-  "description": "Delegate coding work to Codex (gpt-5.6-sol) as a persistent agent team: define agents, run and continue sessions, review results with observed evidence.",
+  "version": "0.3.0",
+  "description": "Codex (gpt-5.6-sol) as native Claude Code subagents: four relay agents (implementer, explorer, solver, reviewer) dispatch spec'd work to persistent Codex sessions, complementing the built-in Claude multi-agent roster.",
   "author": {
     "name": "Joe",
     "email": "joeyanbo608@gmail.com"
   },
   "license": "MIT",
-  "keywords": ["codex", "delegation", "multi-model", "agents"]
+  "keywords": ["codex", "delegation", "multi-model", "agents", "subagents"]
 }
