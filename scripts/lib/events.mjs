@@ -1,14 +1,11 @@
 // Tolerant collector over `codex exec --json` JSONL events.
-// Verified against codex-cli 0.144.0:
-//   {"type":"thread.started","thread_id":"…"}
-//   {"type":"item.completed","item":{"type":"agent_message","text":"…"}}
-//   {"type":"turn.completed","usage":{"input_tokens":…,"cached_input_tokens":…,"output_tokens":…}}
 // Unknown event/item types are ignored so CLI upgrades degrade gracefully.
 
 export function createEventCollector() {
   const data = {
     sessionId: null,
-    lastAgentMessage: null,
+    completed: false,
+    failed: false,
     files: new Map(), // path -> kind
     commands: [],
     usage: { input: 0, cached: 0, output: 0 },
@@ -17,9 +14,6 @@ export function createEventCollector() {
 
   function onItem(item) {
     switch (item?.type) {
-      case "agent_message":
-        if (typeof item.text === "string") data.lastAgentMessage = item.text;
-        break;
       case "file_change": {
         const changes = item.changes ?? item.files ?? [];
         for (const c of changes) {
@@ -59,6 +53,7 @@ export function createEventCollector() {
           onItem(ev.item);
           break;
         case "turn.completed": {
+          data.completed = true;
           const u = ev.usage ?? {};
           data.usage.input += u.input_tokens ?? 0;
           data.usage.cached += u.cached_input_tokens ?? 0;
@@ -66,6 +61,9 @@ export function createEventCollector() {
           break;
         }
         case "turn.failed":
+          data.failed = true;
+          data.errors.push(ev.message ?? ev.error?.message ?? JSON.stringify(ev));
+          break;
         case "error":
           data.errors.push(ev.message ?? ev.error?.message ?? JSON.stringify(ev));
           break;

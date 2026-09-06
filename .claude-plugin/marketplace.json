@@ -1,6 +1,6 @@
 {
   "name": "codex4claude",
-  "description": "Marketplace for the codex4claude plugin — Codex as a persistent delegate agent team inside Claude Code",
+  "description": "Marketplace for codex4claude — direct Codex task execution with persistent sessions inside Claude Code",
   "owner": {
     "name": "Joe"
   },
@@ -8,7 +8,7 @@
     {
       "name": "codex4claude",
       "source": "./",
-      "description": "Codex (gpt-5.6-sol) as native Claude Code subagents: four relay agents dispatch spec'd work to persistent Codex sessions."
+      "description": "Submit tasks directly to Codex (gpt-6-astra), with persistent sessions, background runs, and verification reports."
     }
   ]
 }

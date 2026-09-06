@@ -10,11 +10,11 @@ function stateFile(cwd) {
 
 export function readState(cwd) {
   const file = stateFile(cwd);
-  if (!existsSync(file)) return { version: 1, agents: {}, runs: [] };
+  if (!existsSync(file)) return { version: 2, runs: [] };
   try {
     return JSON.parse(readFileSync(file, "utf8"));
   } catch {
-    return { version: 1, agents: {}, runs: [] };
+    return { version: 2, runs: [] };
   }
 }
 
@@ -36,16 +36,9 @@ export function recordRunStart(cwd, entry) {
   });
 }
 
-export function recordRunEnd(cwd, runId, patch, agentUpdate) {
+export function recordRunEnd(cwd, runId, patch) {
   updateState(cwd, (s) => {
     const run = s.runs.find((r) => r.id === runId);
     if (run) Object.assign(run, patch);
-    if (agentUpdate) {
-      s.agents[agentUpdate.agent] = {
-        last_session: agentUpdate.sessionId,
-        last_run: runId,
-        updated_at: new Date().toISOString(),
-      };
-    }
   });
 }

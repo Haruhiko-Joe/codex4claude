@@ -1,11 +1,11 @@
 import { spawn } from "node:child_process";
-import { existsSync, openSync, readFileSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs, UsageError } from "./args.mjs";
 import { ensureDir, runDir, runsDir } from "./paths.mjs";
-import { readMeta, renderRun } from "./report.mjs";
-import { readState, recordRunEnd, recordRunStart } from "./state.mjs";
+import { readMeta, renderRun, shellQuote } from "./report.mjs";
+import { readState, recordRunEnd } from "./state.mjs";
 import { executeRun, writeMeta } from "./run.mjs";
 
 const SCRIPT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "codex4claude.mjs");
@@ -32,33 +32,31 @@ export async function startBackground(ctx) {
   writeFileSync(path.join(dir, "ctx.json"), JSON.stringify({ ...ctx, runId, background: false }));
   writeMeta(dir, {
     run_id: runId,
-    agent: ctx.agent,
     cwd: ctx.cwd,
     sandbox: ctx.sandbox,
     status: "running",
     started_at: new Date().toISOString(),
-    title: ctx.rawPrompt.split("\n")[0].slice(0, 60),
+    title: ctx.prompt.trimStart().split("\n")[0].slice(0, 60),
   });
 
   const workerLog = openSync(path.join(dir, "worker.log"), "a");
   const child = spawn(process.execPath, [SCRIPT, "run-worker", dir], {
     detached: true,
-    stdio: ["ignore", workerLog, workerLog],
+    stdio: ["ignore", workerLog, workerLog, "ipc"],
   });
+  closeSync(workerLog);
+  // Publish the run only after the worker has saved its PID and state.
+  await new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code) => reject(new Error(`background worker exited before starting (exit ${code})`)));
+    child.once("message", resolve);
+  });
+  child.disconnect();
   child.unref();
-  recordRunStart(ctx.cwd, {
-    id: runId,
-    agent: ctx.agent,
-    status: "running",
-    sandbox: ctx.sandbox,
-    pid: child.pid,
-    started_at: new Date().toISOString(),
-    title: ctx.rawPrompt.split("\n")[0].slice(0, 60),
-  });
   process.stdout.write(
-    `CODEX RUN started run=${runId} agent=${ctx.agent} (background, worker pid ${child.pid})\n` +
+    `CODEX RUN started run=${runId} (background, worker pid ${child.pid})\n` +
       `LOG: ${dir}\n` +
-      `NEXT: node "${SCRIPT}" status ${runId}   # poll; then: result ${runId}\n`
+      `NEXT: node ${shellQuote(SCRIPT)} status ${shellQuote(runId)} --cd ${shellQuote(ctx.cwd)}\n`
   );
   return 0;
 }
@@ -68,13 +66,13 @@ export async function runWorker(argv) {
   const dir = argv[0];
   const ctx = JSON.parse(readFileSync(path.join(dir, "ctx.json"), "utf8"));
   try {
-    await executeRun(ctx);
+    const result = await executeRun(ctx, () => process.send?.("started"));
+    return result.status === "ok" ? 0 : 1;
   } catch (err) {
     writeMeta(dir, { status: "failed", error: String(err), ended_at: new Date().toISOString() });
-    recordRunEnd(ctx.cwd, ctx.runId, { status: "failed", pid: null }, null);
+    recordRunEnd(ctx.cwd, ctx.runId, { status: "failed", pid: null });
     return 1;
   }
-  return 0;
 }
 
 function lastEventSummary(dir) {
@@ -99,7 +97,7 @@ function reconcile(cwd, id) {
   if (!meta) return null;
   if (meta.status === "running" && !pidAlive(meta.worker_pid) && !pidAlive(meta.codex_pid)) {
     writeMeta(dir, { status: "failed", error: "worker died before finalizing", ended_at: new Date().toISOString() });
-    recordRunEnd(cwd, id, { status: "failed", pid: null }, null);
+    recordRunEnd(cwd, id, { status: "failed", pid: null });
     return readMeta(dir);
   }
   return meta;
@@ -127,7 +125,7 @@ export async function jobCommand(cmd, argv) {
           const meta = reconcile(cwd, r.id);
           const status = meta?.status ?? r.status;
           process.stdout.write(
-            `${r.id}  ${String(r.agent).padEnd(16)} ${String(status).padEnd(8)} ${r.dur_s ?? "?"}s  ${r.title ?? ""}\n`
+            `${r.id}  ${String(status).padEnd(8)} ${meta?.duration_s ?? r.dur_s ?? "?"}s  ${r.title ?? ""}\n`
           );
         }
         return 0;
@@ -137,7 +135,7 @@ export async function jobCommand(cmd, argv) {
       if (meta.status === "running") {
         const elapsed = Math.round((Date.now() - Date.parse(meta.started_at)) / 1000);
         process.stdout.write(
-          `CODEX RUN running run=${id} agent=${meta.agent} elapsed=${elapsed}s\n` +
+          `CODEX RUN running run=${id} elapsed=${elapsed}s\n` +
             `last: ${lastEventSummary(runDir(cwd, id))}\nLOG: ${runDir(cwd, id)}\n`
         );
         return 0;
@@ -183,7 +181,8 @@ export async function jobCommand(cmd, argv) {
         process.stdout.write(`run ${id} already ${meta.status}\n`);
         return 0;
       }
-      for (const pid of [meta.codex_pid, meta.worker_pid]) {
+      writeMeta(runDir(cwd, id), { status: "cancelled", ended_at: new Date().toISOString() });
+      for (const pid of [meta.worker_pid, meta.codex_pid]) {
         if (!pidAlive(pid)) continue;
         try {
           process.kill(-pid, "SIGKILL"); // codex is its own group leader
@@ -193,8 +192,7 @@ export async function jobCommand(cmd, argv) {
           } catch {}
         }
       }
-      writeMeta(runDir(cwd, id), { status: "cancelled", ended_at: new Date().toISOString() });
-      recordRunEnd(cwd, id, { status: "cancelled", pid: null }, null);
+      recordRunEnd(cwd, id, { status: "cancelled", pid: null });
       process.stdout.write(`cancelled run ${id}\n`);
       return 0;
     }

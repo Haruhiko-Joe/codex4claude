@@ -1,21 +1,19 @@
 #!/usr/bin/env node
 import { UsageError } from "./lib/args.mjs";
 
-const HELP = `codex4claude — delegate work to Codex (gpt-5.6-sol) as persistent agents
+const HELP = `codex4claude — submit tasks to Codex (gpt-6-astra) with persistent sessions
 
 Usage: node codex4claude.mjs <command> [options]
 
 Commands:
-  doctor                              Check codex CLI, data dir, config
-  agent define <name> [--project] [--file <md>]   Define/update an agent (stdin if no --file)
-  agent list | show <name> | rm <name> [--project]
-  run <agent> [PROMPT]                Run a task (prompt: --prompt-file > stdin > argument)
-    --continue | --session <id>      Resume the agent's last / a specific session
-    --write | --read-only | --dangerous   Sandbox override
+  doctor                              Check codex CLI >= 0.153.4, configured model, data dir
+  run [PROMPT]                        Run a task (prompt: --prompt-file > PROMPT > stdin)
+    --session <id>                    Resume a specific Codex session
+    --write | --read-only | --dangerous   Permissions (default: read-only; choose one)
     --effort <low|medium|high|xhigh|max|ultra>
-    --fast                            Fast mode (service_tier=priority, ~1.5x speed)
+    --fast                            Request Fast mode (service_tier=priority, increased usage)
     --background                      Detached run, returns run id immediately
-    --timeout <sec>                   Foreground timeout (default 540)
+    --timeout <sec>                   Foreground/background timeout (default 540; 0 disables)
     --cd <dir>  --ephemeral  --prompt-file <path>
   status [<run-id>]                   List recent runs / inspect one
   result <run-id>                     Replay the report of a finished run
@@ -35,7 +33,7 @@ async function main() {
     case "doctor":
       return (await import("./lib/doctor.mjs")).doctor();
     case "agent":
-      return (await import("./lib/agents.mjs")).agentCommand(rest);
+      throw new UsageError("agent commands were removed; submit tasks with run [PROMPT], resume with --session <id>");
     case "run":
       return (await import("./lib/run.mjs")).runCommand(rest);
     case "status":

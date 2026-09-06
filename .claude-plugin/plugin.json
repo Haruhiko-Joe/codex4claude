@@ -1,12 +1,12 @@
 {
   "name": "codex4claude",
   "displayName": "Codex for Claude",
-  "version": "0.3.0",
-  "description": "Codex (gpt-5.6-sol) as native Claude Code subagents: four relay agents (implementer, explorer, solver, reviewer) dispatch spec'd work to persistent Codex sessions, complementing the built-in Claude multi-agent roster.",
+  "version": "0.4.0",
+  "description": "Submit tasks directly from Claude Code to Codex (gpt-6-astra), with explicit permissions, persistent sessions, background runs, and verification reports. No predefined agents.",
   "author": {
     "name": "Joe",
     "email": "joeyanbo608@gmail.com"
   },
   "license": "MIT",
-  "keywords": ["codex", "delegation", "multi-model", "agents", "subagents"]
+  "keywords": ["codex", "delegation", "multi-model", "sessions"]
 }

@@ -1,10 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import path from "node:path";
-import { EFFORTS, resolveAgent } from "./agents.mjs";
 import { parseArgs, UsageError } from "./args.mjs";
-import { MODEL, buildExecArgv, spawnCodex } from "./codex.mjs";
+import { EFFORTS, MODEL, buildExecArgv, spawnCodex } from "./codex.mjs";
 import { createEventCollector } from "./events.mjs";
 import { ensureDir, runDir } from "./paths.mjs";
 import { readMeta, renderRun } from "./report.mjs";
@@ -33,13 +32,14 @@ function newRunId() {
   return `r-${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}-${randomBytes(2).toString("hex")}`;
 }
 
-function readPrompt(flags, positionals) {
+async function readPrompt(flags, positionals) {
   if (flags["prompt-file"]) return readFileSync(flags["prompt-file"], "utf8");
-  if (positionals.length > 1) return positionals.slice(1).join(" ");
+  if (positionals.length) return positionals[0];
   if (process.stdin.isTTY) throw new UsageError("no prompt: pass as argument, --prompt-file, or pipe via stdin");
-  const fromStdin = readFileSync(0, "utf8");
-  if (!fromStdin.trim()) throw new UsageError("empty prompt");
-  return fromStdin;
+  process.stdin.setEncoding("utf8");
+  let prompt = "";
+  for await (const chunk of process.stdin) prompt += chunk;
+  return prompt;
 }
 
 function gitChangedPaths(cwd) {
@@ -55,7 +55,9 @@ export function writeMeta(dir, patch) {
   const file = path.join(dir, "meta.json");
   const current = readMeta(dir) ?? {};
   const merged = { ...current, ...patch };
-  writeFileSync(file, JSON.stringify(merged, null, 2));
+  const tmp = `${file}.tmp-${process.pid}`;
+  writeFileSync(tmp, JSON.stringify(merged, null, 2));
+  renameSync(tmp, file);
   return merged;
 }
 
@@ -67,7 +69,7 @@ function guardConcurrentWrite(cwd, sandbox) {
     try {
       process.kill(r.pid, 0);
       throw new UsageError(
-        `another write run is active in this workspace (${r.id}, agent=${r.agent}); ` +
+        `another write run is active in this workspace (${r.id}); ` +
           `wait, cancel it, or run read-only`
       );
     } catch (err) {
@@ -77,90 +79,86 @@ function guardConcurrentWrite(cwd, sandbox) {
   }
 }
 
-export function prepareRun(argv) {
+export async function prepareRun(argv) {
   const { flags, positionals } = parseArgs(argv, RUN_FLAGS);
-  const agentName = positionals[0];
-  if (!agentName) throw new UsageError("run <agent> [PROMPT]");
+  if (flags.continue) {
+    throw new UsageError("--continue was removed; use --session <id> from the CODEX RUN header");
+  }
+  if (positionals.length > 1) {
+    throw new UsageError("run now takes one quoted PROMPT without an agent name: run [PROMPT] [options]");
+  }
   const cwd = path.resolve(flags.cd ?? process.cwd());
-  const agent = resolveAgent(agentName, cwd);
-  if (!agent) throw new UsageError(`agent "${agentName}" not found (see: agent list)`);
-
-  let sandbox = agent.sandbox;
-  if (flags["read-only"]) sandbox = "read-only";
-  if (flags.write) sandbox = "workspace-write";
-  if (flags.dangerous) sandbox = "danger-full-access";
-
-  const effort = flags.effort ?? agent.effort;
-  if (effort && !EFFORTS.includes(effort)) {
+  if ([flags["read-only"], flags.write, flags.dangerous].filter(Boolean).length > 1) {
+    throw new UsageError("choose only one of --read-only, --write, or --dangerous");
+  }
+  const sandbox = flags.dangerous ? "danger-full-access" : flags.write ? "workspace-write" : "read-only";
+  const effort = flags.effort;
+  if (effort !== undefined && !EFFORTS.includes(effort)) {
     throw new UsageError(`effort must be one of: ${EFFORTS.join(", ")}`);
   }
 
-  let resumeSessionId = flags.session ?? null;
-  if (flags.continue && !resumeSessionId) {
-    const last = readState(cwd).agents[agentName]?.last_session;
-    if (!last) throw new UsageError(`no previous session for agent "${agentName}" in this workspace`);
-    resumeSessionId = last;
+  const resumeSessionId = flags.session ?? null;
+  if (resumeSessionId?.startsWith("-")) {
+    throw new UsageError("--session requires a session ID, not a flag");
+  }
+  const timeoutSec = flags.timeout === undefined ? DEFAULT_TIMEOUT_SEC : Number(flags.timeout);
+  if (!Number.isFinite(timeoutSec) || timeoutSec < 0 || timeoutSec * 1000 > 2_147_483_647) {
+    throw new UsageError("--timeout must be between 0 and 2147483.647 seconds (0 disables the timeout)");
   }
 
-  const rawPrompt = readPrompt(flags, positionals).trim();
-  const prompt = resumeSessionId
-    ? rawPrompt
-    : `<system_instructions>\n${agent.instructions}\n</system_instructions>\n\n<task>\n${rawPrompt}\n</task>`;
+  const prompt = await readPrompt(flags, positionals);
+  if (!prompt.trim()) throw new UsageError("empty prompt");
 
   return {
     cwd,
-    agent: agentName,
     sandbox,
     effort,
     fast: Boolean(flags.fast),
     model: MODEL,
     prompt,
-    rawPrompt,
     resumeSessionId,
     ephemeral: Boolean(flags.ephemeral),
-    timeoutSec: flags.timeout ? Number(flags.timeout) : DEFAULT_TIMEOUT_SEC,
+    timeoutSec,
     background: Boolean(flags.background),
     dangerous: Boolean(flags.dangerous),
   };
 }
 
 // Runs one codex turn to completion. Shared by foreground path and background worker.
-export async function executeRun(ctx) {
+export async function executeRun(ctx, onStart) {
   const { cwd } = ctx;
-  const isNewRun = !ctx.runId;
   const runId = ctx.runId ?? newRunId();
   const dir = ensureDir(runDir(cwd, runId));
   const prevMeta = readMeta(dir);
   const turn = (prevMeta?.turns ?? 0) + 1;
 
   appendFileSync(path.join(dir, "prompt.txt"), `\n==== turn ${turn} ====\n${ctx.prompt}\n`);
-  const title = ctx.rawPrompt.split("\n")[0].slice(0, 60);
+  const title = ctx.prompt.trimStart().split("\n")[0].slice(0, 60);
   const started = Date.now();
   writeMeta(dir, {
     run_id: runId,
-    agent: ctx.agent,
     cwd,
     model: ctx.model,
     sandbox: ctx.sandbox,
     effort: ctx.effort ?? null,
     fast: Boolean(ctx.fast),
+    ephemeral: Boolean(ctx.ephemeral),
+    worker_pid: process.pid,
     status: "running",
     turns: turn,
     session_id: ctx.resumeSessionId ?? prevMeta?.session_id ?? null,
     started_at: prevMeta?.started_at ?? new Date(started).toISOString(),
     title: prevMeta?.title ?? title,
   });
-  if (isNewRun) {
-    recordRunStart(cwd, {
-      id: runId,
-      agent: ctx.agent,
-      status: "running",
-      sandbox: ctx.sandbox,
-      pid: process.pid,
-      started_at: new Date(started).toISOString(),
-      title,
-    });
-  }
+  recordRunStart(cwd, {
+    id: runId,
+    status: "running",
+    sandbox: ctx.sandbox,
+    pid: process.pid,
+    started_at: new Date(started).toISOString(),
+    title,
+  });
+  onStart?.();
 
   const gitBefore = ctx.sandbox === "read-only" ? null : gitChangedPaths(cwd);
   const collector = createEventCollector();
@@ -173,7 +171,6 @@ export async function executeRun(ctx) {
     fast: ctx.fast,
     lastMessageFile,
     ephemeral: ctx.ephemeral,
-    prompt: ctx.prompt,
   });
 
   let exitCode = null;
@@ -182,6 +179,7 @@ export async function executeRun(ctx) {
   try {
     const res = await spawnCodex({
       argv,
+      prompt: ctx.prompt,
       cwd,
       timeoutSec: ctx.timeoutSec,
       eventsPath: path.join(dir, "events.jsonl"),
@@ -191,7 +189,9 @@ export async function executeRun(ctx) {
         collector.line(line);
         if (collector.data.sessionId) {
           const meta = readMeta(dir);
-          if (meta && !meta.session_id) writeMeta(dir, { session_id: collector.data.sessionId });
+          if (meta && meta.session_id !== collector.data.sessionId) {
+            writeMeta(dir, { session_id: collector.data.sessionId });
+          }
         }
       },
     });
@@ -201,7 +201,13 @@ export async function executeRun(ctx) {
     spawnError = err;
   }
 
-  const status = spawnError ? "failed" : timedOut ? "timeout" : exitCode === 0 ? "ok" : "failed";
+  const hasFinalMessage = existsSync(lastMessageFile) && readFileSync(lastMessageFile, "utf8").trim().length > 0;
+  const completed = exitCode === 0 && collector.data.completed && !collector.data.failed && hasFinalMessage;
+  const status = readMeta(dir)?.status === "cancelled" ? "cancelled"
+    : timedOut ? "timeout" : !spawnError && completed ? "ok" : "failed";
+  if (status === "failed" && !spawnError && !collector.data.failed && exitCode === 0) {
+    collector.data.errors.push(hasFinalMessage ? "Codex exited without turn.completed" : "Codex produced no final message");
+  }
   const gitAfter = ctx.sandbox === "read-only" ? null : gitChangedPaths(cwd);
   const filesGit =
     gitBefore && gitAfter ? gitAfter.filter((p) => !gitBefore.includes(p)) : gitAfter ?? undefined;
@@ -233,14 +239,13 @@ export async function executeRun(ctx) {
   recordRunEnd(
     cwd,
     runId,
-    { status, dur_s: meta.duration_s, pid: null },
-    status === "ok" && sessionId && !ctx.ephemeral ? { agent: ctx.agent, sessionId } : null
+    { status, dur_s: meta.duration_s, pid: null }
   );
   return { runId, dir, status };
 }
 
 export async function runCommand(argv) {
-  const ctx = prepareRun(argv);
+  const ctx = await prepareRun(argv);
   if (ctx.dangerous) {
     process.stderr.write("⚠ sandbox=danger-full-access: codex runs WITHOUT filesystem isolation\n");
   }

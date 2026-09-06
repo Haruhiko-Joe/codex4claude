@@ -3,8 +3,11 @@ import { createWriteStream, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import readline from "node:readline";
+import { finished } from "node:stream/promises";
 
-export const MODEL = process.env.CODEX4CLAUDE_MODEL || "gpt-5.6-sol";
+export const MODEL = process.env.CODEX4CLAUDE_MODEL || "gpt-6-astra";
+export const MIN_CODEX_VERSION = "0.153.4";
+export const EFFORTS = ["low", "medium", "high", "xhigh", "max", "ultra"];
 
 let cachedBin;
 export function resolveCodexBin() {
@@ -23,7 +26,7 @@ export function resolveCodexBin() {
   return cachedBin;
 }
 
-export function buildExecArgv({ resumeSessionId, model, sandbox, effort, fast, lastMessageFile, ephemeral, prompt }) {
+export function buildExecArgv({ resumeSessionId, model, sandbox, effort, fast, lastMessageFile, ephemeral }) {
   const argv = ["exec"];
   if (resumeSessionId) argv.push("resume", resumeSessionId);
   argv.push("--json", "--skip-git-repo-check", "-m", model, "-o", lastMessageFile);
@@ -35,49 +38,65 @@ export function buildExecArgv({ resumeSessionId, model, sandbox, effort, fast, l
   if (effort) argv.push("-c", `model_reasoning_effort="${effort}"`);
   if (fast) argv.push("-c", `service_tier="priority"`);
   if (ephemeral) argv.push("--ephemeral");
-  argv.push(prompt);
+  argv.push("-");
   return argv;
 }
 
 // Spawns codex, tees stdout JSONL to eventsPath while feeding onLine, stderr to
 // stderrPath. Kills the whole process group on timeout. Resolves with exit info.
-export function spawnCodex({ argv, cwd, timeoutSec, eventsPath, stderrPath, onLine, onSpawn }) {
+export function spawnCodex({ argv, prompt, cwd, timeoutSec, eventsPath, stderrPath, onLine, onSpawn }) {
   const bin = resolveCodexBin();
   if (!bin) throw new Error("codex CLI not found (install codex or set CODEX_BIN)");
   return new Promise((resolve, reject) => {
     const child = spawn(bin, argv, {
       cwd,
       detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
     });
-    onSpawn?.(child.pid);
+    child.once("spawn", () => onSpawn?.(child.pid));
     const events = createWriteStream(eventsPath, { flags: "a" });
     const stderr = createWriteStream(stderrPath, { flags: "a" });
+    let failure = null;
+    const stop = () => {
+      if (!child.pid) return;
+      try { process.kill(-child.pid, "SIGKILL"); } catch {}
+    };
+    const fail = (err) => {
+      failure ??= err;
+      stop();
+    };
+    events.on("error", fail);
+    stderr.on("error", fail);
     child.stderr.pipe(stderr);
     const rl = readline.createInterface({ input: child.stdout });
     rl.on("line", (line) => {
       events.write(line + "\n");
-      onLine?.(line);
+      try { onLine?.(line); } catch (err) { fail(err); }
     });
 
     let timedOut = false;
     const timer = timeoutSec
       ? setTimeout(() => {
           timedOut = true;
-          try {
-            process.kill(-child.pid, "SIGKILL");
-          } catch {}
+          stop();
         }, timeoutSec * 1000)
       : null;
 
-    child.on("error", (err) => {
-      if (timer) clearTimeout(timer);
-      reject(err);
+    child.on("error", fail);
+    child.stdin.on("error", (err) => {
+      // A CLI that exits before reading stdin reports its own error on stderr.
+      if (err.code !== "EPIPE") fail(err);
     });
-    child.on("close", (code) => {
+    child.stdin.end(prompt);
+    child.on("close", async (code) => {
       if (timer) clearTimeout(timer);
       events.end();
       stderr.end();
+      const logs = await Promise.allSettled([finished(events), finished(stderr)]);
+      for (const result of logs) {
+        if (result.status === "rejected") failure ??= result.reason;
+      }
+      if (failure) return reject(failure);
       resolve({ exitCode: code, timedOut, pid: child.pid });
     });
   });

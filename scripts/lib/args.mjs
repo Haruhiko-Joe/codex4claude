@@ -19,7 +19,9 @@ export function parseArgs(argv, spec) {
         flags[name] = true;
       } else {
         const value = eq !== -1 ? arg.slice(eq + 1) : argv[++i];
-        if (value === undefined) throw new UsageError(`--${name} requires a value`);
+        if (value === undefined || !value.trim() || (eq === -1 && value.startsWith("--"))) {
+          throw new UsageError(`--${name} requires a value`);
+        }
         flags[name] = value;
       }
     } else {

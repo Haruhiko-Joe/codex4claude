@@ -1,68 +1,84 @@
 ---
 name: codex-delegation
-description: Dispatch execution work to Codex (gpt-5.6-sol) through the codex-implementer / codex-explorer / codex-solver / codex-reviewer subagents — implementation, broad codebase reading, hard algorithms, independent second-model review. Use whenever a task involves substantial code writing or reading and you only need the result, not the process. Covers spec writing, effort/fast selection, multi-turn sessions, and report verification.
+description: Submit coding, codebase investigation, algorithm, and review tasks directly to Codex (gpt-6-astra). Use when the user requests Codex or a bounded task benefits from a separate model's execution or review. Covers task instructions, permissions, reasoning effort, background runs, explicit session continuation, and verification. No predefined agents or custom agent registry.
 ---
 
 # Codex Delegation
 
-Codex (gpt-5.6-sol, large quota, strong at agentic coding and algorithms) is your execution tier, exposed as four subagents in the Agent tool: `codex-implementer`, `codex-explorer`, `codex-solver`, `codex-reviewer`. Each relays your spec to a persistent Codex session and returns its report verbatim. You plan, write specs, and judge results; the user decides direction and approves irreversible actions.
+Call the engine directly with Bash:
 
-## Choosing the worker
+`node "${CLAUDE_PLUGIN_ROOT}/scripts/codex4claude.mjs"`
 
-Necessary condition for dispatching anything: you need the task's **result, not its process**. If you will need the intermediate reasoning or the decisions made along the way, do it yourself.
+Codex CLI supplies the model's system instructions, tools, project instructions, and session history. Send the task requirements without inventing a role or reproducing the CLI's system prompt. Use the current user's request and explicit task constraints over this skill's defaults, while respecting higher-priority instructions and runtime permissions.
 
-| Route | When |
-|---|---|
-| codex-* subagent | Execution against a writable spec: implementing a spec'd change, broad codebase reading (saves your input tokens), ICPC-level algorithms (codex often beats you here), independent review (different blind spots). |
-| Built-in Claude agents (Explore / Plan / general-purpose) | The subtask needs your own model's judgment: requirement interpretation, architecture tradeoffs, work entangled with the live conversation, or coordinating several Claude agents. |
-| No agent | The task is smaller than its handoff cost (roughly: you'd finish it yourself in under a minute), or the decisions are still evolving while you work. |
+## Decide what to submit
 
-Parallel discipline: read-only dispatches (explorer, reviewer) fan out freely — send them in one message. Write dispatches are serial per workspace: the engine refuses a second concurrent write run, so never dispatch two writers to the same repo at once.
+Submit a bounded task whose result you can review: a code change, a repository question, an algorithm, or an independent review. Keep evolving requirements and decisions with the user. Handle work locally when the handoff would cost more than the task itself.
 
-## Writing the spec
+Read-only tasks can run in parallel. Run only one writing task per workspace; if the engine reports an active writer, wait for that run or report the conflict. Do not disable the permission boundary to bypass a failure.
 
-Codex executes aggressively and follows instructions well, but expands scope when the task is loosely defined — the spec's Constraints are what keep it in bounds. It starts cold: name every file it needs.
+## Write the task
 
+Include only the context that changes the result:
+
+- Goal: the behavior or answer needed.
+- Context: relevant paths, reproduction steps, prior decisions, and useful evidence. Codex can locate additional files itself.
+- Boundaries: authorized edits, interfaces to preserve, and actions requiring a new decision.
+- Acceptance: the checks or evidence that would establish completion.
+
+Make the execution contract explicit in the submitted task: complete the authorized work and its relevant verification, make reasonable assumptions for routine gaps, and report the result. If necessary information or permission is missing, finish independent work and identify the exact blocker. Do not add a fresh approval step for work the user already authorized.
+
+If a skill or project instruction blocks completion, request the exact file path, the relevant instruction, and why it applies. The report should distinguish an explicit requirement from the model's interpretation.
+
+Ask for a conclusion first, followed by useful evidence: changes or findings, commands actually run and their outcomes, and unresolved issues. Use the task's language and a format appropriate to the result. Tests should cover the change's actual risks; don't demand unrelated suites, repeated successful checks, or tests that merely restate the code.
+
+## Run the task
+
+Use a quoted heredoc with a delimiter absent from the task, or `--prompt-file`; never interpolate task text into a shell command. For example:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex4claude.mjs" run --read-only --effort medium <<'CODEX_TASK'
+Explain how authentication works. Start at src/auth and locate its callers.
+Cite the code supporting the conclusion and identify unresolved questions.
+CODEX_TASK
 ```
-## Goal
-The outcome, in one or two sentences.
-## Context
-Relevant files/paths and current state. Decisions already made.
-## Constraints
-What not to touch; interfaces to preserve; where the scope ends.
-## Done-when
-Executable acceptance criteria (commands that must pass).
+
+For authorized edits, use `--write`. The default is `--read-only`; the three permission flags (`--read-only`, `--write`, `--dangerous`) are mutually exclusive. Use `--dangerous` only with explicit authorization for full filesystem access.
+
+The default model is `gpt-6-astra`; `CODEX4CLAUDE_MODEL` can override it. No `--effort` means Codex keeps its configured or model default. Choose a level when the task warrants it:
+
+| Effort | Typical use |
+|---|---|
+| low | Targeted lookup or a mechanical task |
+| medium | Routine investigation or coding |
+| high | Complex implementation, debugging, or review |
+| xhigh / max | Especially difficult, tightly coupled problems |
+| ultra | Maximum reasoning with Codex's automatic task delegation |
+
+These are Codex CLI levels; `ultra` is not an API reasoning parameter. `--fast` requests `service_tier=priority` and increases usage. Choose it for turnaround independently of reasoning depth; availability depends on the active model and account.
+
+Foreground runs: set Bash's timeout to 600000 ms so it outlasts the engine's default 540 seconds. `--timeout <seconds>` applies to both foreground and background runs; `0` disables the engine timeout.
+
+Long tasks: use `--background --timeout 0`. Capture the run ID, then check with `status <run-id>` and fetch `result <run-id>` when finished. Include `--cd <workspace>` if the shell's working directory differs. Space status checks about 30 seconds apart, send meaningful user updates, and continue supervising until the task finishes or a user decision is required. Use `cancel <run-id>` when asked to stop.
+
+## Continue and verify
+
+Every report includes a `CODEX RUN` header, the final message, a `── run info ──` footer, and a `LOG:` path. The session ID in the header identifies Codex's conversation; the run ID identifies this invocation's logs. Rework uses the explicit session:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex4claude.mjs" run --session <session-id> --write <<'CODEX_TASK'
+The acceptance check failed for the empty-input case. Fix that case and rerun the relevant check.
+CODEX_TASK
 ```
 
-Optional dispatch hints above the spec: `effort: xhigh`, `fast`, `long` (expected > 8 min), `session: <id>` (continue earlier work).
+Use the generated `NEXT` command to preserve the workspace and permissions. `--ephemeral` produces a temporary session and no continuation command. Old sessions can retain their historical role instructions; start a new task when that framing no longer fits.
 
-## Effort and speed
+Compare verification claims with the recorded commands and exit codes. The footer summarizes observed activity; missing entries do not prove that an action never happened. For consequential changes, inspect the relevant code and rerun the key acceptance check or request an independent review in a fresh session. Resolve outstanding questions before declaring the overall task complete.
 
-| effort | Use for |
-|---|---|
-| low (+ fast) | Targeted lookups, mechanical edits |
-| medium | Routine exploration, ordinary changes |
-| high | Implementation, review, tricky bugs (implementer/reviewer default) |
-| xhigh | Cross-module work, large refactors, hard debugging |
-| max | Solver default; a single very hard, tightly coupled problem |
-| ultra | Competition-hard problems; background only |
+On failure or timeout, inspect `log <run-id>` and the report first. Continue the known session with targeted instructions instead of blindly repeating a task that may have already changed files. Progress messages alone are not completion, and a successful run does not establish that every acceptance criterion passed.
 
-`fast` is orthogonal (~1.5× speed, more quota): worth it in interactive loops at effort ≤ high; pointless on long background runs.
+## Setup and references
 
-## Multi-turn: you drive the rounds
+`/codex4claude:setup` checks CLI compatibility and the data directory; `/codex4claude:status` lists recent runs. Agent definitions and `--continue` were removed in 0.4.0.
 
-The `CODEX RUN` header of every report carries the session id. To iterate, SendMessage the **same relay subagent** with targeted feedback plus that session id — the resumed session keeps Codex's memory of what failed, which beats a cold re-dispatch. After ~3 rounds without convergence, stop and escalate to the user.
-
-## Reading the report
-
-1. Verification claims are checked, not trusted: the `── run info ──` footer records the commands actually run and their exit codes — compare it against what the report claims. For load-bearing changes, rerun the key acceptance command yourself or dispatch `codex-reviewer` in a fresh session.
-2. Open Questions are mandatory work: decide and continue, or escalate. Never silently drop them.
-3. When chaining dispatches, pass forward summaries, not full reports.
-
-## Escalate to the user
-
-Irreversible or outward-facing actions (deletes, pushes, deploys, migrations); direction choices the spec doesn't settle; 3+ rounds without convergence (model disagreement is signal — present both positions); anything needing danger-full-access.
-
-## Diagnostics and custom agents
-
-`/codex4claude:setup` checks the runtime; `/codex4claude:status` lists recent runs. The four built-in engine roles cover nearly everything — express one-off needs in the spec, not in a new agent definition. Define a custom engine agent (`references/agent-authoring.md`) only when the same task shape has recurred across sessions with stable constraints.
+Guidance checked on 2026-09-06: [Astra prompting](https://developers.openai.com/api/docs/guides/latest-model#prompting-best-practices), [Codex Cookbook](https://developers.openai.com/cookbook/examples/gpt-5/codex_prompting_guide), [non-interactive execution](https://learn.chatgpt.com/docs/non-interactive-mode). Use the Cookbook's general integration advice; Astra behavior follows its newer model guide.

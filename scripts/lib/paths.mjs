@@ -38,18 +38,6 @@ export function runDir(cwd, runId) {
   return path.join(runsDir(cwd), runId);
 }
 
-export function userAgentsDir() {
-  return path.join(dataDir(), "agents");
-}
-
-export function projectAgentsDir(cwd) {
-  return path.join(cwd, ".claude", "codex-agents");
-}
-
-export function builtinAgentsDir() {
-  return path.join(PLUGIN_ROOT, "templates", "agents");
-}
-
 export function ensureDir(dir) {
   mkdirSync(dir, { recursive: true });
   return dir;

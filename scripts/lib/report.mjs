@@ -5,6 +5,10 @@ import { PLUGIN_ROOT } from "./paths.mjs";
 const SCRIPT = path.join(PLUGIN_ROOT, "scripts", "codex4claude.mjs");
 const MAX_MESSAGE_BYTES = 10_000;
 
+export function shellQuote(value) {
+  return "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
+}
+
 function fmtTokens(n) {
   if (n >= 1000) return `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k`;
   return String(n);
@@ -26,7 +30,7 @@ export function renderRun(dir) {
   const lines = [];
   const usage = meta.usage ?? { input: 0, cached: 0, output: 0 };
   lines.push(
-    `CODEX RUN ${meta.status}  run=${meta.run_id}  agent=${meta.agent}  ` +
+    `CODEX RUN ${meta.status}  run=${meta.run_id}  model=${meta.model ?? "?"}  ` +
       `session=${meta.session_id ?? "?"}  turn=${meta.turns ?? 1}  ` +
       `effort=${meta.effort ?? "default"}${meta.fast ? " fast" : ""}  ${meta.duration_s ?? "?"}s  ` +
       `tok:in ${fmtTokens(usage.input)}(${fmtTokens(usage.cached)} cached)/out ${fmtTokens(usage.output)}`
@@ -72,6 +76,7 @@ export function renderRun(dir) {
   if (meta.errors?.length) {
     lines.push(`errors: ${meta.errors.slice(-3).join(" | ")}`);
   }
+  if (meta.error) lines.push(`error: ${meta.error}`);
   if (meta.status === "failed" || meta.status === "timeout") {
     const stderrFile = path.join(dir, "stderr.log");
     if (existsSync(stderrFile)) {
@@ -83,12 +88,17 @@ export function renderRun(dir) {
     }
   }
   lines.push(`LOG: ${dir}`);
-  if (meta.status === "ok") {
-    lines.push(`NEXT: node "${SCRIPT}" run ${meta.agent} --continue "<feedback>"   # same session`);
-  } else if (meta.status === "timeout") {
-    lines.push(`NEXT: session survives; continue with: node "${SCRIPT}" run ${meta.agent} --continue "<instruction>"`);
-  } else if (meta.status === "running") {
-    lines.push(`NEXT: node "${SCRIPT}" status ${meta.run_id}`);
+  const cwdArg = meta.cwd ? ` --cd ${shellQuote(meta.cwd)}` : "";
+  if (meta.status === "running") {
+    lines.push(`NEXT: node ${shellQuote(SCRIPT)} status ${shellQuote(meta.run_id)}${cwdArg}`);
+  } else if (meta.session_id && !meta.ephemeral) {
+    const permission = meta.sandbox === "danger-full-access" ? "--dangerous"
+      : meta.sandbox === "workspace-write" ? "--write" : "--read-only";
+    const effort = meta.effort ? ` --effort ${shellQuote(meta.effort)}` : "";
+    lines.push(
+      `NEXT: node ${shellQuote(SCRIPT)} run --session ${shellQuote(meta.session_id)}${cwdArg} ` +
+      `${permission}${effort}${meta.fast ? " --fast" : ""} '<instruction>'`
+    );
   }
   return lines.join("\n") + "\n";
 }
