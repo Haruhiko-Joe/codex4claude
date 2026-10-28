@@ -6,9 +6,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { test } from "node:test";
-import { workspaceSlug } from "../lib/paths.mjs";
+import { workspaceSlug } from "../../skills/codex-delegation/scripts/lib/paths.mjs";
 
-const script = fileURLToPath(new URL("../codex4claude.mjs", import.meta.url));
+const script = fileURLToPath(new URL("../../skills/codex-delegation/scripts/codex4claude.mjs", import.meta.url));
 const fixture = fileURLToPath(new URL("./fixtures/fake-codex.mjs", import.meta.url));
 const json = (file) => JSON.parse(readFileSync(file, "utf8"));
 
@@ -21,9 +21,12 @@ function setup(t) {
   copyFileSync(fixture, bin);
   chmodSync(bin, 0o755);
   const env = { ...process.env, CODEX_BIN: bin, CODEX4CLAUDE_DATA: data, CODEX4CLAUDE_MODEL: "", FAKE_CODEX_SCENARIO: "ok" };
+  delete env.CLAUDE_PLUGIN_ROOT;
+  delete env.CLAUDE_PLUGIN_DATA;
+  delete env.CLAUDE_SKILL_DIR;
   const run = (argv, options = {}) => {
-    const result = spawnSync(process.execPath, [script, ...argv], {
-      cwd, encoding: "utf8", input: options.input ?? "", timeout: 8000, maxBuffer: 2_000_000,
+    const result = spawnSync(process.execPath, [options.script ?? script, ...argv], {
+      cwd: options.cwd ?? cwd, encoding: "utf8", input: options.input ?? "", timeout: 8000, maxBuffer: 2_000_000,
       env: { ...env, ...options.env },
     });
     if (result.error) throw result.error;
@@ -261,3 +264,73 @@ test("legacy run metadata and agent definitions remain readable and untouched", 
   assert.deepEqual(json(path.join(dir, "meta.json")), oldMeta);
   assert.deepEqual(json(path.join(f.stateDir, "state.json")).agents, agents);
 });
+
+for (const target of ["code", "cowork"]) {
+  test(`${target} skill runs independently after extraction to a path with shell metacharacters`, async (t) => {
+    const f = setup(t);
+    const skillName = target === "cowork" ? "codex-delegation-cowork" : "codex-delegation";
+    const packager = fileURLToPath(new URL("../package_skill.py", import.meta.url));
+    const output = path.join(f.root, "dist");
+    const packed = spawnSync("python3", [packager, output, "--target", target], { cwd: f.cwd, encoding: "utf8" });
+    assert.equal(packed.status, 0, packed.stderr);
+    const archive = path.join(output, `${skillName}.skill`);
+    if (target === "cowork") {
+      assert.deepEqual(readFileSync(path.join(output, `${skillName}.zip`)), readFileSync(archive));
+    }
+    const installDir = path.join(f.root, "installed 技能 ' $() `");
+    const extracted = spawnSync("python3", ["-c", [
+      "import json, sys, zipfile",
+      "with zipfile.ZipFile(sys.argv[1]) as bundle:",
+      "    assert bundle.testzip() is None",
+      "    print(json.dumps(bundle.namelist()))",
+      "    bundle.extractall(sys.argv[2])",
+    ].join("\n"), archive, installDir], { encoding: "utf8" });
+    assert.equal(extracted.status, 0, extracted.stderr);
+    const entries = JSON.parse(extracted.stdout);
+    assert.ok(entries.includes(`${skillName}/SKILL.md`));
+    assert.ok(entries.includes(`${skillName}/scripts/codex4claude.mjs`));
+    assert.ok(entries.every((entry) => entry.startsWith(`${skillName}/`) && !entry.split("/").includes("..")));
+    assert.ok(entries.every((entry) => !/test|fixture|plugin|node_modules|__pycache__|\.DS_Store/.test(entry)));
+    const runtimePrefix = `${skillName}/scripts/`;
+    for (const entry of entries.filter((name) => name.startsWith(runtimePrefix))) {
+      assert.deepEqual(readFileSync(path.join(installDir, entry)), readFileSync(path.join(path.dirname(script), entry.slice(runtimePrefix.length))));
+    }
+    const installedScript = path.join(installDir, skillName, "scripts", "codex4claude.mjs");
+    const run = (argv, options = {}) => f.run(argv, { ...options, script: installedScript, cwd: f.root });
+    const runNext = (result) => {
+      const next = result.stdout.split("\n").find((line) => line.startsWith("NEXT: "));
+      assert.ok(next, result.stdout);
+      assert.ok(next.includes("installed 技能"), next);
+      const followed = spawnSync("/bin/sh", ["-c", next.slice(6)], {
+        cwd: f.root, env: f.env, encoding: "utf8", timeout: 8000,
+      });
+      assert.equal(followed.status, 0, followed.stdout + followed.stderr);
+      return followed;
+    };
+
+    assert.equal(run(["doctor"]).status, 0);
+    const first = run(["run", "--cd", f.cwd, "--write", "--effort", "high"], { input: "packaged task 中文\n" });
+    assert.equal(first.status, 0, first.stderr);
+    const { dir, meta } = f.inspect(first);
+    assert.equal(json(path.join(dir, "received.json")).prompt, "packaged task 中文\n");
+    assert.equal(meta.cwd, f.cwd);
+    const resumed = f.inspect(runNext(first)).meta;
+    assert.equal(resumed.session_id, meta.session_id);
+    assert.equal(resumed.cwd, f.cwd);
+    assert.equal(resumed.sandbox, "workspace-write");
+    assert.equal(resumed.effort, "high");
+
+    const started = run(["run", "background task", "--cd", f.cwd, "--background", "--timeout", "0"], {
+      env: { FAKE_CODEX_SCENARIO: "delayed" },
+    });
+    assert.equal(started.status, 0, started.stderr);
+    const { id } = f.inspect(started);
+    runNext(started);
+    await waitFor(() => !run(["status", id, "--cd", f.cwd]).stdout.includes("CODEX RUN running"));
+    const result = run(["result", id, "--cd", f.cwd]);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.match(result.stdout, /fixture final report/);
+    assert.ok(run(["status", "--cd", f.cwd]).stdout.includes(id));
+    assert.match(run(["log", id, "--cd", f.cwd, "--grep", "turn.completed"]).stdout, /turn.completed/);
+  });
+}

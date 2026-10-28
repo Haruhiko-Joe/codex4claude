@@ -1,14 +1,11 @@
 import { spawn } from "node:child_process";
 import { closeSync, existsSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { parseArgs, UsageError } from "./args.mjs";
-import { ensureDir, runDir, runsDir } from "./paths.mjs";
+import { SCRIPT_PATH as SCRIPT, ensureDir, runDir, runsDir } from "./paths.mjs";
 import { readMeta, renderRun, shellQuote } from "./report.mjs";
 import { readState, recordRunEnd } from "./state.mjs";
 import { executeRun, writeMeta } from "./run.mjs";
-
-const SCRIPT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "codex4claude.mjs");
 
 function pidAlive(pid) {
   if (!pid) return false;

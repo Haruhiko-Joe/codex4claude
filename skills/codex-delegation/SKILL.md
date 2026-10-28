@@ -1,15 +1,44 @@
 ---
 name: codex-delegation
-description: Submit coding, codebase investigation, algorithm, and review tasks directly to Codex (gpt-6-astra). Use when the user requests Codex or a bounded task benefits from a separate model's execution or review. Covers task instructions, permissions, reasoning effort, background runs, explicit session continuation, and verification. No predefined agents or custom agent registry.
+description: Submit coding, codebase investigation, algorithm, and review tasks to Codex from Claude Code. Use when the user requests Codex, wants to check its setup or manage its runs, or a bounded task benefits from a separate model's execution or review. Supports explicit permissions, background runs, session continuation, and verification.
+compatibility: Claude Code with Bash, Node.js 18 or later, and an authenticated Codex CLI 0.153.4 or later.
+license: MIT
+metadata:
+  author: Joe
+  version: "0.5.0"
 ---
 
 # Codex Delegation
 
-Call the engine directly with Bash:
+Use this skill in Claude Code. Call the bundled engine with Bash:
 
-`node "${CLAUDE_PLUGIN_ROOT}/scripts/codex4claude.mjs"`
+`node "${CLAUDE_SKILL_DIR}/scripts/codex4claude.mjs"`
+
+Claude Code substitutes `${CLAUDE_SKILL_DIR}` in the skill text; it is not a shell environment variable. Quote the resulting path as literal text, escaping any shell metacharacters it contains. Keep the shell in the user's project and pass its absolute path with `--cd` for task and run-management commands. The skill's installation directory is not the task workspace.
 
 Codex CLI supplies the model's system instructions, tools, project instructions, and session history. Send the task requirements without inventing a role or reproducing the CLI's system prompt. Use the current user's request and explicit task constraints over this skill's defaults, while respecting higher-priority instructions and runtime permissions.
+
+## Setup and run management
+
+For `/codex-delegation setup`, an environment-check request, or the first Codex task in a session, check `node --version` (18 or later), then run:
+
+```bash
+node "${CLAUDE_SKILL_DIR}/scripts/codex4claude.mjs" doctor
+```
+
+Report a missing or outdated Node/Codex CLI, or an unwritable data directory, with the relevant fix. Codex must be on PATH or configured with `CODEX_BIN` and logged in with `codex login`. The doctor checks the CLI version, configured model, and data directory; it does not call the model or verify login or model access. Actual authentication and model failures appear in the run report and logs.
+
+Route management requests to the corresponding engine command instead of submitting them as tasks:
+
+| Request after `/codex-delegation`, or its natural-language equivalent | Engine command |
+|---|---|
+| `setup` | `doctor` |
+| `status [run-id]` | `status [run-id] --cd <workspace>` |
+| `result <run-id>` | `result <run-id> --cd <workspace>` |
+| `log <run-id>` | `log <run-id> --cd <workspace>` |
+| `cancel <run-id>` | `cancel <run-id> --cd <workspace>` |
+
+Without a run ID, `status` lists recent runs in the workspace. With an ID, it shows progress or the completed report. Relay the result concisely. Submit actual coding, investigation, or review requests with `run` as described below.
 
 ## Decide what to submit
 
@@ -37,7 +66,7 @@ Ask for a conclusion first, followed by useful evidence: changes or findings, co
 Use a quoted heredoc with a delimiter absent from the task, or `--prompt-file`; never interpolate task text into a shell command. For example:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex4claude.mjs" run --read-only --effort medium <<'CODEX_TASK'
+node "${CLAUDE_SKILL_DIR}/scripts/codex4claude.mjs" run --cd "/path/to/workspace" --read-only --effort medium <<'CODEX_TASK'
 Explain how authentication works. Start at src/auth and locate its callers.
 Cite the code supporting the conclusion and identify unresolved questions.
 CODEX_TASK
@@ -59,14 +88,14 @@ These are Codex CLI levels; `ultra` is not an API reasoning parameter. `--fast` 
 
 Foreground runs: set Bash's timeout to 600000 ms so it outlasts the engine's default 540 seconds. `--timeout <seconds>` applies to both foreground and background runs; `0` disables the engine timeout.
 
-Long tasks: use `--background --timeout 0`. Capture the run ID, then check with `status <run-id>` and fetch `result <run-id>` when finished. Include `--cd <workspace>` if the shell's working directory differs. Space status checks about 30 seconds apart, send meaningful user updates, and continue supervising until the task finishes or a user decision is required. Use `cancel <run-id>` when asked to stop.
+Long tasks: use `--background --timeout 0`. Capture the run ID, then check with `status <run-id>` and fetch `result <run-id>` when finished. Pass the same `--cd <workspace>` to each command. Space status checks about 30 seconds apart, send meaningful user updates, and continue supervising until the task finishes or a user decision is required. Use `cancel <run-id>` when asked to stop.
 
 ## Continue and verify
 
 Every report includes a `CODEX RUN` header, the final message, a `── run info ──` footer, and a `LOG:` path. The session ID in the header identifies Codex's conversation; the run ID identifies this invocation's logs. Rework uses the explicit session:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex4claude.mjs" run --session <session-id> --write <<'CODEX_TASK'
+node "${CLAUDE_SKILL_DIR}/scripts/codex4claude.mjs" run --cd "/path/to/workspace" --session <session-id> --write <<'CODEX_TASK'
 The acceptance check failed for the empty-input case. Fix that case and rerun the relevant check.
 CODEX_TASK
 ```
@@ -77,8 +106,6 @@ Compare verification claims with the recorded commands and exit codes. The foote
 
 On failure or timeout, inspect `log <run-id>` and the report first. Continue the known session with targeted instructions instead of blindly repeating a task that may have already changed files. Progress messages alone are not completion, and a successful run does not establish that every acceptance criterion passed.
 
-## Setup and references
-
-`/codex4claude:setup` checks CLI compatibility and the data directory; `/codex4claude:status` lists recent runs. Agent definitions and `--continue` were removed in 0.4.0.
+## References
 
 Guidance checked on 2026-09-06: [Astra prompting](https://developers.openai.com/api/docs/guides/latest-model#prompting-best-practices), [Codex Cookbook](https://developers.openai.com/cookbook/examples/gpt-5/codex_prompting_guide), [non-interactive execution](https://learn.chatgpt.com/docs/non-interactive-mode). Use the Cookbook's general integration advice; Astra behavior follows its newer model guide.

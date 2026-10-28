@@ -3,12 +3,12 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { parseArgs, UsageError } from "../lib/args.mjs";
-import { buildExecArgv, EFFORTS } from "../lib/codex.mjs";
-import { supportsCodexVersion } from "../lib/doctor.mjs";
-import { createEventCollector } from "../lib/events.mjs";
-import { workspaceSlug } from "../lib/paths.mjs";
-import { prepareRun } from "../lib/run.mjs";
+import { parseArgs, UsageError } from "../../skills/codex-delegation/scripts/lib/args.mjs";
+import { buildExecArgv, EFFORTS } from "../../skills/codex-delegation/scripts/lib/codex.mjs";
+import { supportsCodexVersion } from "../../skills/codex-delegation/scripts/lib/doctor.mjs";
+import { createEventCollector } from "../../skills/codex-delegation/scripts/lib/events.mjs";
+import { workspaceSlug } from "../../skills/codex-delegation/scripts/lib/paths.mjs";
+import { prepareRun } from "../../skills/codex-delegation/scripts/lib/run.mjs";
 
 test("parseArgs: flags, positionals, delimiter, and missing values", () => {
   const spec = { write: "boolean", effort: "string", timeout: "string" };

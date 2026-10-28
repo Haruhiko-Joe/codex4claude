@@ -4,11 +4,9 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+export const SCRIPT_PATH = fileURLToPath(new URL("../codex4claude.mjs", import.meta.url));
 
 export function dataDir() {
-  // CLAUDE_PLUGIN_DATA is unreliable here: in Bash it may point at whichever
-  // plugin's context is active (observed: the official codex plugin's dir).
   const fromEnv = process.env.CODEX4CLAUDE_DATA;
   if (fromEnv && !fromEnv.includes("${")) return fromEnv;
   return path.join(homedir(), ".claude", "codex4claude");

@@ -1,8 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { PLUGIN_ROOT } from "./paths.mjs";
+import { SCRIPT_PATH as SCRIPT } from "./paths.mjs";
 
-const SCRIPT = path.join(PLUGIN_ROOT, "scripts", "codex4claude.mjs");
 const MAX_MESSAGE_BYTES = 10_000;
 
 export function shellQuote(value) {
